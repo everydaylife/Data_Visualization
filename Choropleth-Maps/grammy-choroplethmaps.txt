@@ -1,0 +1,144 @@
+# R code for making choropleth map of the United States
+
+# Using 3 combined datasets
+# Grammy wins for the last five years by US state (Grammy site + Wikipedia merged)
+# US population per state (Wikipedia)
+# Taxable revenue earned by businesses from the entertainment industry by state (US Govt)
+
+library(sp)  # spatial analysis in R
+library(maptools)  # utilities for working with shapefiles and map projection
+library(ggplot2)  # plotting utilities
+library(colorspace)  # color functions like HLS() for hue, luminance, and saturation/chroma
+library(maps)
+library(mapproj)
+
+library(Cairo)  # many output options for data visualization
+gpclibPermit()  # permit use of non-commercial package gpclib
+
+# this will provide a map with no grid lines for longitude and latitude
+theme_clean <- function(base_size = 12) {
+    require(grid)
+    theme_grey(base_size) %+replace%
+    theme(
+    axis.title = element_blank(),
+    axis.text = element_blank(),
+    panel.background = element_blank(),
+    panel.grid = element_blank(),
+    axis.ticks.length = unit(0, "cm"),
+    axis.ticks.margin = unit(0, "cm"),
+    panel.margin = unit(0, "lines"),
+    plot.margin = unit(c(0,0,0,0), "lines"),
+    complete = TRUE)
+    } # end of theme_clean function
+    
+# USA_adm1.RData  # US with state boundaries
+
+load("USA_adm1.RData")  # US with states shapefile from http://www.gadm.org/
+
+# fortify() from ggplot2 converts to a data frame for use in ggplot2 maps 
+gadm.data.frame <- fortify(gadm)
+# set id as factor with the state name from the gadm object
+gadm.data.frame$state <- factor(gadm.data.frame$id, 
+  levels = 1:length(gadm$NAME_1), labels = gadm$NAME_1) 
+# character string for state... not factor
+gadm.data.frame$state <- as.character(gadm.data.frame$state)
+    
+#enter data source
+my.data.frame <- read.csv("grammy.csv", header = TRUE)
+# character string for state... not factor
+my.data.frame$State <- as.character(my.data.frame$state)  
+
+# variables in the my.data.frame
+# State: state name 
+# population: population of the state
+# wins: number of Grammy wins in the last 5 years
+# estab: number of entertainment establishments in the state
+# receipts: amount of taxable revenue earned from entertainment
+# winsperpop: Grammy wins / population
+# winsperreceipt: Grammy wins / entertainment revenue
+
+# check that the state names match up between the two data frames
+if(!setequal(unique(my.data.frame$State), unique(gadm.data.frame$state))) {
+   cat("\n\nState names from input data:\n\n")
+   print(sort(unique(my.data.frame$State)))
+   cat("\n\nState names from GIS database:\n\n")
+   print(sort(unique(gadm.data.frame$state)))
+   cat("\n\n")
+   stop("\n\nExecution terminated")  
+   }
+
+# merge the Grammy data with the map data
+combined.data.frame <- merge(gadm.data.frame, my.data.frame, 
+  by.x = "state",  by.y = "State")
+
+# define a bounding box for the continental United States
+# Bounding Box: -124.7625, 24.5210, -66.9326, 49.3845
+# select polygons within the continental United States
+us.data.frame <- subset(combined.data.frame,
+  subset = ((long >= -124.7625) & (long <= -66.9326) &
+            (lat >= 24.5210) & (lat <= 49.3845)))
+            
+# let's also drop the polygons for the holes... lakes...
+selected.us.data.frame <- subset(us.data.frame, subset = (!hole))
+                     
+# coord_map function offers alternative projections, see help(mapproject)  
+# mercator is the default
+# for US map with mercator projection use coord_map("mercator")
+# for us map with conic projection use coord_map("polyconic")
+# albers(lat0,lat1) is another commonly used projection (requires latitude values)
+# for US map with albers projection across the continental US 
+#   use coord_map("albers", lat0 = 24.5210, lat1 = 49.3845)
+# choosing a projection is often a matter of personal choice... I like albers
+
+# map Grammy wins per population by state
+# here we show albers with grid lines for longitude and latitude
+# gradient scale values were selected to provide a convenient
+# and visually appealing red-to-gray-to-blue gradient for the map
+us.map.object <- ggplot(data = selected.us.data.frame, 
+    aes(map_id = id, x = long, y = lat, fill = winsperpop)) + 
+  geom_map(map = selected.us.data.frame, colour = "black") + 
+  coord_map("albers", lat0 = 24.5210, lat1 = 49.3845) + 
+  scale_fill_gradient2(low = hex(HLS(12,0.5,0.9)), 
+                       mid = "gray90", 
+                       high = hex(HLS(253,0.5,0.9)), 
+                       midpoint = median(my.data.frame$winsperpop))
+print(us.map.object)  # print the map to the screen (long run time... be patient)
+
+# map Grammy wins per entertainment revenue by state
+# here we show the same map with no grid lines using theme_clean function
+us.map.object2 <- ggplot(data = selected.us.data.frame, 
+    aes(map_id = id, x = long, y = lat, fill = winsperreceipt)) + 
+  geom_map(map = selected.us.data.frame, colour = "black") + 
+  coord_map("albers", lat0 = 24.5210, lat1 = 49.3845) + 
+  scale_fill_gradient2(low = hex(HLS(12,0.5,0.9)), 
+                       mid = "gray90", 
+                       high = hex(HLS(253,0.5,0.9)), 
+                       midpoint = median(my.data.frame$winsperreceipt)) +
+    theme_clean()
+print(us.map.object2)  # print the map to the screen (long run time... be patient)
+
+# another version of wins by entertainment revenue
+# here we show the same map with no grid lines using theme_clean function
+us.map.object3 <- ggplot(data = selected.us.data.frame, 
+                        aes(map_id = id, x = long, y = lat, fill = winsperreceipt)) + 
+  geom_map(map = selected.us.data.frame, colour = "black") + 
+  coord_map("albers", lat0 = 24.5210, lat1 = 49.3845) + 
+  scale_fill_gradient2(low = hex(HLS(12,0.5,0.9)), 
+                       mid = "gray90", 
+                       high = hex(HLS(253,0.5,0.9)), 
+                       midpoint = median(my.data.frame$winsperreceipt)) +
+  theme_clean()
+print(us.map.object3)  # print the map to the screen (long run time... be patient)
+
+
+# put map with no grid lines into a pdf file
+pdf(file = "plot_map_pop.pdf", width = 11, height = 8.5)
+print(us.map.object)
+dev.off()
+
+# put map with no grid lines into a pdf file
+pdf(file = "plot_map_receipt.pdf", width = 11, height = 8.5)
+print(us.map.object2)
+dev.off()
+
+
